@@ -1,14 +1,17 @@
+import csv
+import string
+import time
+
+import pandas as pd
 import requests
 from bs4 import BeautifulSoup
-import time
-import string
-import csv
 
 # Base URL for player pages
 BASE_URL = "https://www.basketball-reference.com/players/{letter}/"
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 RANGE_LIMIT = 1  # Number of players to scrape per letter for testing
 RATE_LIMIT_SECONDS = 5  # Time to wait between requests
+
 def fetch_page(url):
     """Fetches a webpage and returns the response text."""
     try:
@@ -29,6 +32,9 @@ def parse_player_row(row):
     except (AttributeError, ValueError) as e:
         print(f"Error parsing player row: {e}")
         return None, None, None
+
+def convert_date_to_datetime(string_date):
+    return pd.to_datetime(string_date, format="%B %d, %Y")
 
 def fetch_player_data(player_link):
     """Fetches and parses the details and stats of an individual player from a single page."""
@@ -71,16 +77,44 @@ def fetch_player_data(player_link):
         "Position": position,
         "Height": height,
         "Weight": weight,
-        "Birthdate": birthdate,
-        "NBA Debut": nba_debut
+        "Birthdate": convert_date_to_datetime(birthdate),
+        "NBA Debut": convert_date_to_datetime(nba_debut)
     }
+    return {"details": details, "stats": extract_stats_table(player_soup)}
 
-    return {"details": details, "stats": []}
+def extract_stats_table(soup):
+    stats_div = soup.find("div", id="div_totals_stats")
+    if not stats_div:
+        return "Stats table div not found."
+
+    table_body = stats_div.find("tbody")
+    if not table_body:
+        return "Table body not found."
+
+    # Extract headers from the table
+    headers = [header['data-stat'] for header in stats_div.find("thead").find_all("th") if 'data-stat' in header.attrs]
+
+    # Extract rows and cells
+    rows = table_body.find_all("tr")
+    stats_data = []
+
+    for row in rows:
+        cells = row.find_all("td")
+        row_data = {}
+        for i, cell in enumerate(cells):
+            value = cell.text.strip()
+            if headers[i + 1] != "awards":
+                value = value if value else 0.0
+
+            row_data[headers[i + 1]] = value
+        stats_data.append(row_data)
+
+    return stats_data
 
 def scrape_players_for_letter(letter):
     """Scrapes players for a given letter and returns player details and stats."""
     players = []
-    stats_collection = {}
+    stats_collection = []
     url = BASE_URL.format(letter=letter)
     page_content = fetch_page(url)
     if not page_content:
@@ -100,9 +134,12 @@ def scrape_players_for_letter(letter):
         time.sleep(RATE_LIMIT_SECONDS)  # Rate limiting between player detail requests
         player_data = fetch_player_data(player_link)
 
+        player_id = player_link.rstrip('/').split("/")[-1].replace('.html', '')
+
         players.append({
+            "id": player_id,
             "name": player_data["details"]["Name"],
-            "link": player_link,
+            "url": player_link,
             "position": player_data["details"]["Position"],
             "height": player_data["details"]["Height"],
             "weight": player_data["details"]["Weight"],
@@ -110,39 +147,42 @@ def scrape_players_for_letter(letter):
             "nba_debut": player_data["details"]["NBA Debut"]
         })
 
+        for stat_line in player_data["stats"]:
+            stat_line_id = {
+                "id" :player_id,
+                **stat_line
+            }
+            stats_collection.append(stat_line_id)
+
     return players, stats_collection
 
 def save_to_csv(players, stats):
     """Saves players and their stats to CSV files."""
     # Save players data
     with open('players.csv', 'w', newline='', encoding='utf-8') as players_file:
-        writer = csv.DictWriter(players_file, fieldnames=["name", "link", "position", "height", "weight", "birthdate", "nba_debut"])
+        writer = csv.DictWriter(players_file,
+                                fieldnames=["id", "name", "url", "position", "height", "weight", "birthdate", "nba_debut"])
         writer.writeheader()
         writer.writerows(players)
 
     # Save stats data
     with open('player_stats.csv', 'w', newline='', encoding='utf-8') as stats_file:
-        fieldnames = ["player_name", "season", "data-stat", "value"]
-        writer = csv.writer(stats_file)
-        writer.writerow(["player_name", "season", "data-stat", "value"])
-
-        for player_name, player_stats in stats.items():
-            for season_stats in player_stats:
-                for stat, value in season_stats.items():
-                    season = season_stats.get('season', 'N/A')
-                    writer.writerow([player_name, season, stat, value])
+        fieldnames = list(stats[0].keys())
+        writer = csv.DictWriter(stats_file, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(stats)
 
 def main():
     """Main function to scrape all players and their stats."""
     all_players = []
-    all_stats = {}
+    all_stats = []
     letters_range = string.ascii_lowercase  # List of letters from a to z
 
     for letter in letters_range:
         print(f"Scraping letter: {letter}")
         players_for_letter, stats_for_letter = scrape_players_for_letter(letter)
         all_players.extend(players_for_letter)
-        all_stats.update(stats_for_letter)
+        all_stats.extend(stats_for_letter)
         time.sleep(RATE_LIMIT_SECONDS)  # Rate limiting to avoid overloading the server
 
         break

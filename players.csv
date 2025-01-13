@@ -1,2 +1,2 @@
-name,link,position,height,weight,birthdate,nba_debut
-Alaa Abdelnaby,https://www.basketball-reference.com/players/a/abdelal01.html,Power Forward,6-10,240,"June 24, 1968","November 2, 1990"
+id,name,url,position,height,weight,birthdate,nba_debut
+abdelal01,Alaa Abdelnaby,https://www.basketball-reference.com/players/a/abdelal01.html,Power Forward,6-10,240,1968-06-24 00:00:00,1990-11-02 00:00:00
